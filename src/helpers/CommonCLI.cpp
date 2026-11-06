@@ -180,6 +180,18 @@ uint8_t CommonCLI::buildAdvertData(uint8_t node_type, uint8_t* app_data) {
   }
 }
 
+// ---- MK: clock diff instrumentation ----
+static uint32_t mk_last_sync_epoch = 0;
+static int32_t  mk_last_sync_delta = 0;
+
+static void mk_apply_time(uint32_t new_time) {
+  uint32_t prev = getRTCClock()->getCurrentTime();
+  getRTCClock()->setCurrentTime(new_time);
+  mk_last_sync_epoch = new_time;
+  mk_last_sync_delta =
+      (int32_t)((int64_t)new_time - (int64_t)prev);
+}
+
 void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* reply) {
     if (_prefs->getRadioPrefs()->handleCommand(command, sender_timestamp, reply)) {   // is a radio CLI command?
       if (_prefs->getRadioPrefs()->isDirty()) { savePrefs(); }
@@ -215,7 +227,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       if (accepted) {
         uint32_t newtime = sender_timestamp + 1;
         uint32_t diff = (newtime > curr) ? (newtime - curr) : (curr - newtime);
-        getRTCClock()->setCurrentTime(newtime);
+        mk_apply_time(newtime);  // MK: record sync
         uint32_t now = getRTCClock()->getCurrentTime();
         DateTime dt = DateTime(now);
         sprintf(reply, "OK - clock set: %02d:%02d:%02d - %d/%d/%d UTC (delta %c%02u:%02u:%02u) [S]",
@@ -238,6 +250,24 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       if (!_board->startOTAUpdate(_prefs->node_name, reply)) {
         strcpy(reply, "Error");
       }
+    } else if (memcmp(command, "clock diff", 10) == 0) {
+      if (mk_last_sync_epoch == 0) {
+        strcpy(reply, "clock diff: no clock sync performed in this session");
+      } else {
+        uint32_t now = getRTCClock()->getCurrentTime();
+        uint32_t age = now - mk_last_sync_epoch;
+        bool slow = (mk_last_sync_delta >= 0);
+        uint32_t ad = slow ? (uint32_t)mk_last_sync_delta
+                           : (uint32_t)(-mk_last_sync_delta);
+        sprintf(reply,
+          "clock diff: node was %c%02u:%02u:%02u (%s) "
+          "at last sync, %lud %02u:%02u:%02u ago",
+          slow ? '+' : '-',
+          ad / 3600, (ad / 60) % 60, ad % 60,
+          slow ? "slow" : "fast",
+          (unsigned long)(age / 86400),
+          (age / 3600) % 24, (age / 60) % 60, age % 60);
+      }
     } else if (memcmp(command, "clock", 5) == 0) {
       uint32_t now = getRTCClock()->getCurrentTime();
       DateTime dt = DateTime(now);
@@ -250,7 +280,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       bool accepted = (secs > curr) || (curr - secs <= CLOCK_SYNC_TOLERANCE);
       if (accepted) {
         uint32_t diff = (secs > curr) ? (secs - curr) : (curr - secs);
-        getRTCClock()->setCurrentTime(secs);
+        mk_apply_time(secs);  // MK: record sync
         uint32_t now = getRTCClock()->getCurrentTime();
         DateTime dt = DateTime(now);
         sprintf(reply, "OK - clock set: %02d:%02d:%02d - %d/%d/%d UTC (delta %c%02u:%02u:%02u) [T]",
