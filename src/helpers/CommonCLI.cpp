@@ -209,13 +209,30 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       strcpy(reply, "OK - Advert sent");
     } else if (memcmp(command, "clock sync", 10) == 0) {
       uint32_t curr = getRTCClock()->getCurrentTime();
-      if (sender_timestamp > curr) {
-        getRTCClock()->setCurrentTime(sender_timestamp + 1);
+      const uint32_t CLOCK_SYNC_TOLERANCE = 3;  // допуск, сек
+      bool accepted = (sender_timestamp > curr) ||
+                      (sender_timestamp != 0 && curr - sender_timestamp <= CLOCK_SYNC_TOLERANCE);
+      if (accepted) {
+        uint32_t newtime = sender_timestamp + 1;
+        uint32_t diff = (newtime > curr) ? (newtime - curr) : (curr - newtime);
+        getRTCClock()->setCurrentTime(newtime);
         uint32_t now = getRTCClock()->getCurrentTime();
         DateTime dt = DateTime(now);
-        sprintf(reply, "OK - clock set: %02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+        sprintf(reply, "OK - clock set: %02d:%02d:%02d - %d/%d/%d UTC (delta %c%02u:%02u:%02u) [S]",
+                dt.hour(), dt.minute(), dt.second(), dt.day(), dt.month(), dt.year(),
+                (newtime > curr) ? '+' : '-', diff / 3600, (diff % 3600) / 60, diff % 60);
       } else {
-        strcpy(reply, "ERR: clock cannot go backwards");
+        // Вычисляем общую разницу в секундах
+        uint32_t diff = curr - sender_timestamp;
+
+        // Раскладываем разницу на часы, минуты и остаток секунд
+        uint32_t hours = diff / 3600;
+        uint32_t minutes = (diff % 3600) / 60;
+        uint32_t seconds = diff % 60;
+
+        // Форматируем детальный ответ с величиной ошибки
+        sprintf(reply, "ERR: clock cannot go backwards [S] (Ahead by %02u:%02u:%02u. Node epoch: %u, Recv epoch: %u)",
+                hours, minutes, seconds, curr, sender_timestamp);
       }
     } else if (memcmp(command, "start ota", 9) == 0) {
       if (!_board->startOTAUpdate(_prefs->node_name, reply)) {
@@ -224,17 +241,28 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
     } else if (memcmp(command, "clock", 5) == 0) {
       uint32_t now = getRTCClock()->getCurrentTime();
       DateTime dt = DateTime(now);
-      sprintf(reply, "%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+      // Добавлен вывод секунд (%02d) и dt.second() в конце аргументов
+    sprintf(reply, "%02d:%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.second(), dt.day(), dt.month(), dt.year());
     } else if (memcmp(command, "time ", 5) == 0) {  // set time (to epoch seconds)
       uint32_t secs = _atoi(&command[5]);
       uint32_t curr = getRTCClock()->getCurrentTime();
-      if (secs > curr) {
+      const uint32_t CLOCK_SYNC_TOLERANCE = 3;  // допуск, сек
+      bool accepted = (secs > curr) || (curr - secs <= CLOCK_SYNC_TOLERANCE);
+      if (accepted) {
+        uint32_t diff = (secs > curr) ? (secs - curr) : (curr - secs);
         getRTCClock()->setCurrentTime(secs);
         uint32_t now = getRTCClock()->getCurrentTime();
         DateTime dt = DateTime(now);
-        sprintf(reply, "OK - clock set: %02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+        sprintf(reply, "OK - clock set: %02d:%02d:%02d - %d/%d/%d UTC (delta %c%02u:%02u:%02u) [T]",
+                dt.hour(), dt.minute(), dt.second(), dt.day(), dt.month(), dt.year(),
+                (secs > curr) ? '+' : '-', diff / 3600, (diff % 3600) / 60, diff % 60);
       } else {
-        strcpy(reply, "(ERR: clock cannot go backwards)");
+        uint32_t diff = curr - secs;
+        uint32_t hours = diff / 3600;
+        uint32_t minutes = (diff % 3600) / 60;
+        uint32_t seconds = diff % 60;
+        sprintf(reply, "(ERR: clock cannot go backwards [T]: Ahead by %02u:%02u:%02u. Node epoch: %u, Recv epoch: %u)",
+                hours, minutes, seconds, curr, secs);
       }
     } else if (memcmp(command, "neighbors", 9) == 0) {
       _callbacks->formatNeighborsReply(reply);
