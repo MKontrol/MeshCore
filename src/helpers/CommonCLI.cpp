@@ -184,9 +184,7 @@ uint8_t CommonCLI::buildAdvertData(uint8_t node_type, uint8_t* app_data) {
 static uint32_t mk_last_sync_epoch = 0;
 static int32_t  mk_last_sync_delta = 0;
 
-static void mk_apply_time(uint32_t new_time) {
-  uint32_t prev = getRTCClock()->getCurrentTime();
-  getRTCClock()->setCurrentTime(new_time);
+static void mk_record_sync(uint32_t prev, uint32_t new_time) {
   mk_last_sync_epoch = new_time;
   mk_last_sync_delta =
       (int32_t)((int64_t)new_time - (int64_t)prev);
@@ -227,7 +225,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       if (accepted) {
         uint32_t newtime = sender_timestamp + 1;
         uint32_t diff = (newtime > curr) ? (newtime - curr) : (curr - newtime);
-        mk_apply_time(newtime);  // MK: record sync
+        getRTCClock()->setCurrentTime(newtime); mk_record_sync(curr, newtime);  // MK
         uint32_t now = getRTCClock()->getCurrentTime();
         DateTime dt = DateTime(now);
         sprintf(reply, "OK - clock set: %02d:%02d:%02d - %d/%d/%d UTC (delta %c%02u:%02u:%02u) [S]",
@@ -252,7 +250,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       }
     } else if (memcmp(command, "clock diff", 10) == 0) {
       if (mk_last_sync_epoch == 0) {
-        strcpy(reply, "clock diff: no clock sync performed in this session");
+        strcpy(reply, "clock diff: no clock sync performed "
+            "in this session");
       } else {
         uint32_t now = getRTCClock()->getCurrentTime();
         uint32_t age = now - mk_last_sync_epoch;
@@ -280,7 +279,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       bool accepted = (secs > curr) || (curr - secs <= CLOCK_SYNC_TOLERANCE);
       if (accepted) {
         uint32_t diff = (secs > curr) ? (secs - curr) : (curr - secs);
-        mk_apply_time(secs);  // MK: record sync
+        getRTCClock()->setCurrentTime(secs); mk_record_sync(curr, secs);  // MK
         uint32_t now = getRTCClock()->getCurrentTime();
         DateTime dt = DateTime(now);
         sprintf(reply, "OK - clock set: %02d:%02d:%02d - %d/%d/%d UTC (delta %c%02u:%02u:%02u) [T]",
